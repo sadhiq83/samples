@@ -1,0 +1,51 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: sadmcontainerregistry.azurecr.io
+        username: ${{ secrets.acr_sadmcontainerregistry_username }}
+        password: ${{ secrets.acr_sadmcontainerregistry_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/" -f  "Dockerfile" -t sadmcontainerregistry.azurecr.io/ak8sclustercd:${{ github.sha }}
+        docker push sadmcontainerregistry.azurecr.io/ak8sclustercd:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_ak8sclustercd_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep ak8s-cluster-cda611 | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace ak8s-cluster-cda611`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: ak8s-cluster-cda611
+        container-registry-url: sadmcontainerregistry.azurecr.io
+        container-registry-username: ${{ secrets.acr_sadmcontainerregistry_username }}
+        container-registry-password: ${{ secrets.acr_sadmcontainerregistry_password }}
+        secret-name: ak8sclustercdockerauth
+       
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: ak8s-cluster-cda611
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+          manifests/ingress.yml
+        images: |
+          sadmcontainerregistry.azurecr.io/ak8sclustercd:${{ github.sha }}
+        imagepullsecrets: |
+          ak8sclustercdockerauth
